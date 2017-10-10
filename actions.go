@@ -5,8 +5,21 @@ import ("fmt"
 		"github.com/gorilla/mux"
 		"encoding/json"
 		"gopkg.in/mgo.v2"
-		//"gopkg.in/mgo.v2/bson"
+		"gopkg.in/mgo.v2/bson"
 		)
+
+type Message struct {
+	Status string  `json: "status"`
+	Message string `json: "message"`
+}
+
+func (this *Message) setStatus(data string) {
+	this.Status = data
+}
+
+func (this *Message) setMessage(data string) {
+	this.Message = data
+}
 
 func getSession() *mgo.Session {
 	session, err := mgo.Dial("mongodb://localhost")
@@ -16,6 +29,18 @@ func getSession() *mgo.Session {
 	}
 
 	return session
+}
+
+func responseMovie(w http.ResponseWriter, status int, results Movie) {
+	w.Header().Set("Content-Type","application/json")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(results)
+}
+
+func responseMovies(w http.ResponseWriter, status int, results []Movie) {
+	w.Header().Set("Content-Type","application/json")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(results)
 }
 
 var collection = getSession().DB("curso_go").C("movies");
@@ -33,17 +58,29 @@ func MovieList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	
-	w.Header().Set("Content-Type","application/json")
-	w.WriteHeader(200)
-	json.NewEncoder(w).Encode(results)
+	responseMovies(w, 200, results)
 }
 
 func MovieShow(w http.ResponseWriter, r *http.Request) {
 	params := mux.Vars(r)
-
 	movie_id := params["id"]
 
-	fmt.Fprintf(w, "Cargado la pelicula numero %s",movie_id)	
+	if(!bson.IsObjectIdHex(movie_id)){
+		w.WriteHeader(404)
+		return
+	}
+
+	oid := bson.ObjectIdHex(movie_id)
+	
+	results := Movie{}
+	err := collection.FindId(oid).One(&results)
+
+	if(err != nil){
+		w.WriteHeader(404)
+		return
+	}
+
+	responseMovie(w, 200, results)
 }
 
 func MovieAdd(w http.ResponseWriter, r *http.Request) {
@@ -65,7 +102,67 @@ func MovieAdd(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type","application/json")
+	responseMovie(w, 200, movie_data)
+}
+
+func MovieUpdate(w http.ResponseWriter, r *http.Request) {
+	params := mux.Vars(r)
+	movie_id := params["id"]
+
+	if(!bson.IsObjectIdHex(movie_id)){
+		w.WriteHeader(404)
+		return
+	}
+
+	oid := bson.ObjectIdHex(movie_id)
+	
+	decoder := json.NewDecoder(r.Body)
+
+	var movie_data Movie
+	err := decoder.Decode(&movie_data)
+
+	if(err != nil){
+		w.WriteHeader(500)
+		return
+	}
+	defer r.Body.Close()
+
+	document := bson.M{"_id": oid}
+	change := bson.M{"$set": movie_data}
+	err = collection.Update(document, change)
+
+	if(err != nil){
+		w.WriteHeader(404)
+		return
+	}
+
+	responseMovie(w, 200, movie_data)
+}
+
+func MovieRemove(w http.ResponseWriter, r *http.Request) {
+	params := mux.Vars(r)
+	movie_id := params["id"]
+
+	if(!bson.IsObjectIdHex(movie_id)){
+		w.WriteHeader(404)
+		return
+	}
+
+	oid := bson.ObjectIdHex(movie_id)
+	
+	err := collection.RemoveId(oid)
+
+	if(err != nil){
+		w.WriteHeader(404)
+		return
+	}
+
+	message := new(Message)
+	message.setStatus("success")
+	message.setMessage("The movie with ID " + movie_id + "has been deleted correctly")
+
+	results := message
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(200)
-	json.NewEncoder(w).Encode(movie_data)
+	json.NewEncoder(w).Encode(results)
 }
